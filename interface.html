@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CONTADOR</title>
+    <!-- Agrega la biblioteca Paho para MQTT -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.1.0/paho-mqtt.min.js"></script>
+
+	<style>
+		body {
+            margin: 0;
+            font-family: "Open Sans", sans-serif;
+            position: absolute;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            display: table;
+        }
+
+        #activity {
+            height: 100%;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            align-content: center;
+            margin-top: 18%;
+        }
+
+        #activity:before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 20vh;
+            background: rgba(0, 173, 239, 0.5);
+        }
+        #activity:after {
+            content: "";
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100vw;
+            height: 20vh;
+            background: rgba(235, 114, 0, 0.5);
+        }
+
+        #result {
+            text-transform: uppercase;
+        }
+
+
+        .hits {
+            font-size: 2em;
+            font-weight: bolder;
+        }
+
+
+	</style>
+</head>
+<body>
+
+    <div id="activity" >
+		<h1 id="counter">There are <span class="hits">0</span> people.</h1>
+	</div>
+
+
+<script>
+    // Configuración de conexión MQTT
+    var broker = "localhost" ; //'81.61.99.244'; // Reemplaza con la dirección de tu servidor MQTT
+    var client = new Paho.Client(broker, 8080, "/mqtt", 'web-client-' + parseInt(Math.random() * 100));
+    var counter = 0;
+
+    // Función que se ejecutará al recibir un mensaje MQTT
+    function handleMessage(message) {
+        counter += parseInt(message.payloadString);
+        // Actualizar el contador con la información recibida
+        var contadorElement = document.getElementById('counter');
+        contadorElement.innerHTML = 'There are <span class="hits">' + counter + "</span> people.";
+    }
+
+    // Establecer los callbacks de conexión y mensaje
+    client.onConnectionLost = function (responseObject) {
+        if (responseObject.errorCode !== 0) {
+            console.log('Conexión perdida: ' + responseObject.errorMessage);
+        }
+    };
+
+    client.onMessageArrived = function (message) {
+        handleMessage(message);
+    };
+
+    // Conectar al servidor MQTT
+    client.connect({
+        onSuccess: function () {
+            console.log('Conectado al servidor MQTT');
+            // Suscribirse al tema necesario
+            client.subscribe('test'); // Reemplaza con el tema que estás utilizando
+        },
+        onFailure: function (message) {
+            console.log('Error de conexión: ' + message.errorMessage);
+        }
+    });
+</script>
+
+</body>
+</html>
