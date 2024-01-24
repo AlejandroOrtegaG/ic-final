@@ -1,0 +1,1 @@
+mosquitto_pub -h 192.168.0.10 -t test -m $@
