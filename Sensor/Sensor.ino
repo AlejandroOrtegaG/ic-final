@@ -45,19 +45,8 @@ RTCZero rtc;
 #define ADDRESS_CHANGE_3RD_SEQUENCE byte(165)
 #define ADDRESS_CHANGE_2ND_SEQUENCE byte(170)
 
-#define ok 0xEA //Codigo de ok del slave 
-#define OPUS  0x06 //Codigo de Operacion del comando "us"
-#define OPOFF  0x01 //Codigo de operación del comando "us <dir> off"
-#define OPOS  0x03 //Codigo de operación del comando "us <dir> one-shot"
-#define OPST  0x05 //Codigo de operación del comando "us <dir> status"
-#define OPCM  0x10//Codigo de operación del comando "us <dir> unit cm"
-#define OPMS  0x11//Codigo de operación del comando "us <dir> unit ms"
-#define OPINC  0x12 //Codigo de operación del comando "us <dir> unit inc"
-#define OPD  0x07 //Codigo de operación del comando "us <dir> delay ms"
-#define OPON  0x02 //Codigo de operación del comando "us <dir> on ms"
-
-byte direccion_entrada = byte((0xEE)>>1);
-byte direccion_salida = byte ((0xF2)>>1);
+byte direccion_entrada = byte((0xE0)>>1);
+byte direccion_salida = byte ((0xEA)>>1);
 byte fakeD1 = byte(0xEE);
 byte fakeD2 = byte(0xF2);
 volatile int entradaFlag = 0;
@@ -78,9 +67,9 @@ volatile int estados[3] = {(0,0),(0,0),(0,0)};
 const byte unidades[3] = {80,81,82};
 const String unidades_String[3] = {"Inches","Cms","ms"};
 
-volatile int entradas = 0;
-volatile int salidas = 0;
-volatile int personas = 0;
+volatile int8_t entradas = 0;
+volatile int8_t salidas = 0;
+volatile int8_t personas = 0;
 const int puertaId = 0;
 
 //--------------LORA--------------------------
@@ -88,7 +77,7 @@ const int puertaId = 0;
 
 // NOTA: Ajustar estas variables 
 const uint8_t localAddress = 0xB0;     // Dirección de este dispositivo
-uint8_t destination = 0xFF;            // Dirección de destino, 0xFF es la dirección de broadcast
+uint8_t destination = 0x07;            // Dirección de destino, 0xFF es la dirección de broadcast
 uint8_t syncWord = 0x12;              // Palabra de sincronizacion
 volatile bool txDoneFlag = true;       // Flag para indicar cuando ha finalizado una transmisión
 volatile bool transmitting = false;
@@ -121,6 +110,7 @@ int disparador_1 = 1;
 int disparador_2 = 1;
 int umbralcm_entrada = 30;
 int umbralcm_salida = 30;
+long time = 0;
 
 inline void write_command(byte address,byte command)
 { 
@@ -154,9 +144,8 @@ void ejecutar_dispositivo(uint8_t direccion, int unidad, int delay_ms) {
   byte low_min=read_register(direccion,AUTOTUNE_MINIMUM_LOW_BYTE);
 
 
-  Serial.print(int((high_byte_range<<8) | low_byte_range)); Serial.print(unidades_String[unidad] +
-   ". (min=");
-  Serial.print(int((high_min<<8) | low_min)); Serial.println(unidades_String[unidad] + ".)");
+  //Serial.println(int((high_byte_range<<8) | low_byte_range)); 
+  //Serial.print(int((high_min<<8) | low_min)); Serial.println(unidades_String[unidad] + ".)");
 int resultado = int((high_byte_range<<8) | low_byte_range);
 int min = int((high_min<<8) | low_min);
 
@@ -293,13 +282,6 @@ void setup() {
 
   Serial.println("LoRa init succeeded.\n");
  
- //Inicializamos el reloj
-  rtc.begin();
-  rtc.setMinutes(0);
-  rtc.enableAlarm(rtc.MATCH_MMSS);
-  rtc.setAlarmMinutes(5);
-  rtc.attachInterrupt(LoRaSegment);
-
 //Calibramos los sensores para saber que distancia es la que va a ser de regular
 valorNormalEntrada =  calibrar_dispositivo(direccion_entrada,unidades[1],delay_entrada);
 
@@ -310,19 +292,19 @@ valorNormalSalida = calibrar_dispositivo(direccion_salida,unidades[1],delay_sali
 //Iniciamos las interrupciones 
   action_tc4.start(periodo_entrada,disparar_1,&ctx_1);
   action_tc5.start(periodo_salida,disparar_2,&ctx_2);
-
+  time = millis();
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
  if(disparador_1 == 1){
-  Serial.print("Dispositivo 1: \n");
+  //Serial.print("Dispositivo 1: \n");
   ejecutar_dispositivo(direccion_entrada,unidad_entrada,delay_entrada);
   disparador_1 = 0;
   }
 
   if(disparador_2 == 1){
-  Serial.print("Dispositivo 2: \n");
+  //Serial.print("Dispositivo 2: \n");
  ejecutar_dispositivo(direccion_salida,unidad_salida,delay_salida);
  disparador_2 = 0;
   }
@@ -387,14 +369,15 @@ if(entradaFlag2 == 1){
 }
 
 
-  Serial.println("Personas: ");
-  Serial.print(personas);
-  Serial.print("Salidas: ");
-  Serial.println(salidas);
-  Serial.print("Entradas : ");
-  Serial.println(entradas);
+  Serial.print("Personas: ");
+  Serial.println(personas);
 
-
+  if(millis() - time >= 60000){
+    Serial.print("Envia un mensaje");
+    LoRaSegment();
+    time = millis();
+    personas = 0;
+  }
 
 
 }
@@ -410,23 +393,8 @@ void LoRaSegment(){
 
     uint8_t payload[50];
     uint8_t payloadLength = 0;
-
-    payload[payloadLength]    = (thisNodeConf.bandwidth_index << 4);
-    payload[payloadLength++] |= ((thisNodeConf.spreadingFactor - 6) << 1);
-    payload[payloadLength]    = ((thisNodeConf.codingRate - 5) << 6);
-    payload[payloadLength++] |= ((thisNodeConf.txPower - 2) << 1);
-
-    // Incluimos el RSSI y el SNR del último paquete recibido
-    // RSSI puede estar en un rango de [0, -127] dBm
-    payload[payloadLength++] = uint8_t(-LoRa.packetRssi() * 2);
-    // SNR puede estar en un rango de [20, -148] dBm
-    payload[payloadLength++] = uint8_t(148 + LoRa.packetSnr());
-    //Añadimos el numero de personas que ha captado el sensor
-    payload[payloadLength++] = uint8_t(personas);
     //Añadimos el número de entradas que ha captado el sensor
-    payload[payloadLength++] = uint8_t(entradas);
-    //Añadimos el número de salidas que ha captado el sensor
-    payload[payloadLength++] = uint8_t(salidas);
+    payload[payloadLength++] = personas;
   
     sendMessage(payload, payloadLength, msgCount);
     Serial.print("Sending packet ");
