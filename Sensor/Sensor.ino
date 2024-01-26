@@ -45,8 +45,8 @@ volatile int8_t personas = 0;
 
 // NOTA: Ajustar estas variables
 const uint8_t localAddress = 0xB0;  // Dirección de este dispositivo
-uint8_t destination = 0x07;         // Dirección de destino, 0xFF es la dirección de broadcast
-uint8_t syncWord = 0x12;            // Palabra de sincronizacion
+uint8_t destination = 0x02;         // Dirección de destino, 0xFF es la dirección de broadcast
+uint8_t syncWord = 0x13;            // Palabra de sincronizacion
 volatile bool txDoneFlag = true;    // Flag para indicar cuando ha finalizado una transmisión
 volatile bool transmitting = false;
 
@@ -61,17 +61,17 @@ typedef struct {
 double bandwidth_kHz[10] = { 7.8E3, 10.4E3, 15.6E3, 20.8E3, 31.25E3,
                              41.7E3, 62.5E3, 125E3, 250E3, 500E3 };
 
-LoRaConfig_t thisNodeConf = { 6, 10, 5, 2 };
+LoRaConfig_t thisNodeConf   = { 9, 8, 5, 5};
 
 enum STAGE {
   BASE,
   INDISTINGUISHED,
   IN_ACTIVATED,
   IN_OUT,
-  OUT_AFTER_IN,
+  IN_THEN_OUT,
   OUT_ACTIVATED,
   OUT_IN,
-  IN_AFTER_OUT,
+  OUT_THEN_IN,
 };
 
 //-----Sensonres config---------------//
@@ -85,21 +85,6 @@ constexpr const long period = 70 * 100000;
 uint16_t threshold_in = 0;
 uint16_t threshold_out = 0;
 STAGE stage = BASE;
-
-void disparar(void* v) {
-  flag_get = true;
-}
-
-int calibrar_dispositivo(uint8_t dev) {
-  write_command(dev);
-
-  while(read_register(addrs_vec[dev], 0) == 0xFF);
-
-  byte hi = read_register(addrs_vec[dev], RANGE_HIGH_BYTE);
-  byte lo = read_register(addrs_vec[dev], RANGE_LOW_BYTE);
-
-  return get_measure(hi, lo);
-}
 
 void setup() {
   Serial.begin(9600);
@@ -160,6 +145,7 @@ void setup() {
 }
 
 void loop() {
+  static uint32_t measure_counter = 0;
   // put your main code here, to run repeatedly:
   if (flag_get) {
     if (get_measure(0)) {
@@ -184,91 +170,94 @@ void loop() {
       }
     }
     flag_get = false;
+
+    uint8_t inout = (entradaFlag<<1) + salidaFlag;
+    switch (stage) {
+      case BASE: // 0 -- 0
+      Serial.println("BASE");
+        switch(inout) {
+          case 0b00: break;
+          case 0b01: stage = OUT_ACTIVATED; break;
+          case 0b10: stage = IN_ACTIVATED; break;
+          case 0b11: stage = INDISTINGUISHED; break;
+        }
+      break;
+      case INDISTINGUISHED: // 1 -- 1
+      Serial.println("INDISTINGUISHED");
+        switch(inout) {
+          case 0b00: stage = BASE; break;
+          case 0b01: break;
+          case 0b10: break;
+          case 0b11: break;
+        }
+      break;
+      case IN_ACTIVATED: // 1 -> 0
+      Serial.println("IN_ACTIVATED");
+        switch(inout) {
+          case 0b00: stage = BASE; break;
+          case 0b01: stage = IN_THEN_OUT; break;
+          case 0b10: break;
+          case 0b11: stage = IN_OUT; break;
+        }
+      break;
+      case IN_OUT: // 1 -> 1
+      Serial.println("IN_OUT");
+        switch(inout) {
+          case 0b00: stage = BASE; personas++; break;
+          case 0b01: stage = IN_THEN_OUT; break;
+          case 0b10: stage = IN_ACTIVATED; break;
+          case 0b11: break;
+        }
+      break;
+      case IN_THEN_OUT: // 0 -> 1
+      Serial.println("IN_THEN_OUT");
+        switch(inout) {
+          case 0b00: stage = BASE; personas ++; break;
+          case 0b01: break;
+          case 0b10: stage = INDISTINGUISHED; break;
+          case 0b11: stage = IN_OUT; break;
+        }
+      break;
+      case OUT_ACTIVATED: // 0 <- 1
+      Serial.println("OUT_ACTIVATED");
+        switch(inout) {
+          case 0b00: stage = BASE; break;
+          case 0b01: break;
+          case 0b10: stage = OUT_THEN_IN; break;
+          case 0b11: stage = OUT_IN; break;
+        }
+      break;
+      case OUT_IN: // 1 <- 1
+      Serial.println("OUT_IN");
+        switch(inout) {
+          case 0b00: stage = BASE; personas--; break;
+          case 0b01: stage = OUT_ACTIVATED; break;
+          case 0b10: stage = OUT_THEN_IN; break;
+          case 0b11: break;
+        }
+      break;
+      case OUT_THEN_IN: // 1 <- 0
+      Serial.println("OUT_THEN_IN");
+        switch(inout) {
+          case 0b00: stage = BASE; personas--; break;
+          case 0b01: stage = INDISTINGUISHED; break;
+          case 0b10: break;
+          case 0b11: stage = OUT_IN; break;
+        }
+      break;
+    }
+
+    Serial.print("Personas: ");
+    Serial.println(personas);
+    measure_counter++;
   }
 
-  if (millis() - time >= 60000) {
-    Serial.print("Envia un mensaje");
+  if (millis() - time >= 10000) {
     LoRaSegment();
     time = millis();
     personas = 0;
   }
 
-  switch (stage) {
-    case BASE:
-    break;
-    case INDISTINGUISHED:
-    break;
-    case IN_ACTIVATED:
-    break;
-    case IN_OUT:
-    break;
-    case OUT_AFTER_IN:
-    break;
-    case OUT_ACTIVATED:
-    break;
-    case OUT_IN:
-    break;
-    case IN_AFTER_OUT:
-    break;
-  }
-
-  //Logica de progreso para saber si estan entrando o saliendo
-  if (salidaFlag == 0 && entradaFlag == 1 && salidaFlag3 == 1) {
-    salidas++;
-    personas--;
-  }
-
-  if (salidaFlag == 1 && entradaFlag == 1 && salidaFlag2 == 1 && entradaFlag2 == 0) {
-    salidaFlag3 = 1;
-  } else {
-    salidaFlag3 = 0;
-  }
-
-  if (salidaFlag3 == 1) {
-    return;
-  }
-
-  if (salidaFlag == 1 && entradaFlag == 0 && entradaFlag2 == 0) {
-    salidaFlag2 = 1;
-  } else {
-    salidaFlag2 = 0;
-  }
-
-  if (salidaFlag2 == 1) {
-    return;
-  }
-
-  if (salidaFlag == 1 && entradaFlag == 0 && entradaFlag3 == 1) {
-    entradas++;
-    personas++;
-  }
-
-  if (entradaFlag3 == 1) {
-  }
-
-  if (salidaFlag == 1 && entradaFlag == 1 && entradaFlag2 == 1) {
-    entradaFlag3 = 1;
-  } else {
-    entradaFlag3 = 0;
-  }
-
-  if (entradaFlag3 == 1) {
-    return;
-  }
-
-  if (salidaFlag == 0 && entradaFlag == 1) {
-    entradaFlag2 = 1;
-  } else {
-    entradaFlag2 = 0;
-  }
-
-  if (entradaFlag2 == 1) {
-    return;
-  }
-
-
-  Serial.print("Personas: ");
-  Serial.println(personas);
 }
 
 
@@ -289,8 +278,7 @@ void LoRaSegment() {
   Serial.print(msgCount++);
   Serial.print(": ");
   Serial.print((payload[0] & 0xF0) >> 4, HEX);
-  Serial.print(payload[0] & 0x0F, HEX);
-  Serial.print("\n");
+  Serial.println(payload[0] & 0x0F, HEX);
 
   action_tc4.start(period, disparar, nullptr);
 }
@@ -335,6 +323,7 @@ bool get_measure(uint8_t dev) {
 uint16_t get_measure(uint8_t hi, uint8_t lo) {
   return uint16_t(hi << 8) + uint16_t(lo);
 }
+
 byte read_register(byte address, byte the_register) {
   Wire.beginTransmission(address);
   Wire.write(the_register);
@@ -344,4 +333,19 @@ byte read_register(byte address, byte the_register) {
   Wire.requestFrom(address, byte(1));
   while (!Wire.available()) { Serial.println("WIRE ERROR"); /* do nothing */ }
   return Wire.read();
+}
+
+void disparar(void* v) {
+  flag_get = true;
+}
+
+int calibrar_dispositivo(uint8_t dev) {
+  write_command(dev);
+
+  while(read_register(addrs_vec[dev], 0) == 0xFF);
+
+  byte hi = read_register(addrs_vec[dev], RANGE_HIGH_BYTE);
+  byte lo = read_register(addrs_vec[dev], RANGE_LOW_BYTE);
+
+  return get_measure(hi, lo);
 }
